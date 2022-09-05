@@ -263,46 +263,59 @@ impl FuseChannel {
             }
             if fusereq_available {
                 let fd = self.file.as_raw_fd();
-                match read(fd, &mut self.buf) {
-                    Ok(len) => {
-                        // ###############################################
-                        // Note: it's a heavy hack to reuse the same underlying data
-                        // buffer for both Reader and Writer, in order to reduce memory
-                        // consumption. Here we assume Reader won't be used anymore once
-                        // we start to write to the Writer. To get rid of this hack,
-                        // just allocate a dedicated data buffer for Writer.
-                        let buf = unsafe {
-                            std::slice::from_raw_parts_mut(self.buf.as_mut_ptr(), self.buf.len())
-                        };
-                        // Reader::new() and Writer::new() should always return success.
-                        let reader =
-                            Reader::from_fuse_buffer(FuseBuf::new(&mut self.buf[..len])).unwrap();
-                        let writer = FuseDevWriter::new(fd, buf).unwrap();
-                        return Ok(Some((reader, writer)));
+                let mut retry_times = 0;
+                while retry_times < 3 {
+                    match read(fd, &mut self.buf) {
+                        Ok(len) => {
+                            // ###############################################
+                            // Note: it's a heavy hack to reuse the same underlying data
+                            // buffer for both Reader and Writer, in order to reduce memory
+                            // consumption. Here we assume Reader won't be used anymore once
+                            // we start to write to the Writer. To get rid of this hack,
+                            // just allocate a dedicated data buffer for Writer.
+                            let buf = unsafe {
+                                std::slice::from_raw_parts_mut(
+                                    self.buf.as_mut_ptr(),
+                                    self.buf.len(),
+                                )
+                            };
+                            // Reader::new() and Writer::new() should always return success.
+                            let reader =
+                                Reader::from_fuse_buffer(FuseBuf::new(&mut self.buf[..len]))
+                                    .unwrap();
+                            let writer = FuseDevWriter::new(fd, buf).unwrap();
+                            return Ok(Some((reader, writer)));
+                        }
+                        Err(e) => {
+                            retry_times += 1;
+                            match e {
+                                Errno::ENOENT => {
+                                    // ENOENT means the operation was interrupted, it's safe to restart
+                                    trace!("restart reading due to ENOENT");
+                                    continue;
+                                }
+                                Errno::EAGAIN => {
+                                    trace!("restart reading due to EAGAIN");
+                                    continue;
+                                }
+                                Errno::EINTR => {
+                                    trace!("syscall interrupted");
+                                    continue;
+                                }
+                                Errno::ENODEV => {
+                                    info!("fuse filesystem umounted");
+                                    return Ok(None);
+                                }
+                                e => {
+                                    warn! {"read fuse dev failed on fd {}: {}", fd, e};
+                                    return Err(SessionFailure(format!(
+                                        "read new request: {:?}",
+                                        e
+                                    )));
+                                }
+                            }
+                        }
                     }
-                    Err(e) => match e {
-                        Errno::ENOENT => {
-                            // ENOENT means the operation was interrupted, it's safe to restart
-                            trace!("restart reading due to ENOENT");
-                            continue;
-                        }
-                        Errno::EAGAIN => {
-                            trace!("restart reading due to EAGAIN");
-                            continue;
-                        }
-                        Errno::EINTR => {
-                            trace!("syscall interrupted");
-                            continue;
-                        }
-                        Errno::ENODEV => {
-                            info!("fuse filesystem umounted");
-                            return Ok(None);
-                        }
-                        e => {
-                            warn! {"read fuse dev failed on fd {}: {}", fd, e};
-                            return Err(SessionFailure(format!("read new request: {:?}", e)));
-                        }
-                    },
                 }
             }
         }
