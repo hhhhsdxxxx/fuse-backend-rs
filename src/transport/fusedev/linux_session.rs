@@ -31,7 +31,7 @@ const FUSE_HEADER_SIZE: usize = 0x1000;
 const POLL_EVENTS_CAPACITY: usize = 1024;
 
 const FUSE_DEVICE: &str = "/dev/fuse";
-const FUSE_FSTYPE: &str = "fuse";
+const FUSE_FSTYPE: &str = "fuseblk";
 
 const EXIT_FUSE_EVENT: Token = Token(0);
 const FUSE_DEV_EVENT: Token = Token(1);
@@ -75,7 +75,7 @@ impl FuseSession {
 
     /// Mount the fuse mountpoint, building connection with the in kernel fuse driver.
     pub fn mount(&mut self) -> Result<()> {
-        let mut flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOATIME;
+        let mut flags = MsFlags::MS_NOSUID |  MsFlags::MS_NOATIME;
         if self.readonly {
             flags |= MsFlags::MS_RDONLY;
         }
